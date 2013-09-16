@@ -1,3 +1,21 @@
 Read the documentation in qemu-doc.html.
 
 Fabrice Bellard.
+
+To run RECORD/REPLAY, follow the following steps:
+
+1. Configure and compile qemu source,
+cd qemu-0.13.0-rr && ./myconfigure && make clean && make
+
+2. Create a qcow2 image for guest OS(say image.qcow2).
+
+3. To run in RECORD mode,
+./x86_64-softmmu/qemu-system-x86_64 -record filename[name of the record file] image.qcow2
+
+4. To REPLAY the recorded sequence,
+./x86_64-softmmu/qemu-system-x86_64 -replay filename[name of the record file] image.qcow2
+
+Good luck! and please let me know about how you used this implementation.
+
+thanks,
+Piyus Kedia (piyus.kedia@cse.iitd.ernet.in)

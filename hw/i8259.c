@@ -29,6 +29,10 @@
 
 /* debug PIC */
 //#define DEBUG_PIC
+#include "rr_log.h"
+#include "cpus.h"
+#include "mydebug.h"
+#include "record.h"
 
 #ifdef DEBUG_PIC
 #define DPRINTF(fmt, ...)                                       \
@@ -402,20 +406,28 @@ static uint32_t pic_ioport_read(void *opaque, uint32_t addr1)
     unsigned int addr;
     int ret;
 
-    addr = addr1;
-    addr &= 1;
-    if (s->poll) {
-        ret = pic_poll_read(s, addr1);
-        s->poll = 0;
-    } else {
-        if (addr == 0) {
-            if (s->read_reg_select)
-                ret = s->isr;
-            else
-                ret = s->irr;
-        } else {
-            ret = s->imr;
-        }
+    if (replaying_fp) {
+       ret = hw_replay(RR_ENTRY_TYPE_PIC);
+    }
+    else {
+      addr = addr1;
+      addr &= 1;
+      if (s->poll) {
+          ret = pic_poll_read(s, addr1);
+          s->poll = 0;
+      } else {
+          if (addr == 0) {
+              if (s->read_reg_select)
+                  ret = s->isr;
+              else
+                  ret = s->irr;
+          } else {
+              ret = s->imr;
+          }
+      }
+      if (recording_fp) {
+        hw_record(ret, RR_ENTRY_TYPE_PIC);
+      }
     }
     DPRINTF("read: addr=0x%02x val=0x%02x\n", addr1, ret);
     return ret;

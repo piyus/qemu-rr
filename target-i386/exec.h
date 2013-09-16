@@ -75,7 +75,7 @@ void QEMU_NORETURN raise_exception_err(int exception_index, int error_code);
 void QEMU_NORETURN raise_exception(int exception_index);
 void QEMU_NORETURN raise_exception_env(int exception_index, CPUState *nenv);
 void do_smm_enter(void);
-
+void raise_replay_interrupt(int intno);
 /* n must be a constant to be efficient */
 static inline target_long lshift(target_long x, int n)
 {
@@ -234,6 +234,7 @@ static inline void helper_fstt(CPU86_LDouble f, target_ulong ptr)
     int e;
 
     temp.d = f;
+    printf("%s().%x\n",__func__,ptr);
     /* mantissa */
     stq(ptr, (MANTD(temp) << 11) | (1LL << 63));
     /* exponent + sign */

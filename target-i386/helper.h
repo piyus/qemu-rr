@@ -5,6 +5,7 @@ DEF_HELPER_FLAGS_1(cc_compute_c, TCG_CALL_PURE, i32, int)
 
 DEF_HELPER_0(lock, void)
 DEF_HELPER_0(unlock, void)
+DEF_HELPER_1(set_eflags, void, int)
 DEF_HELPER_2(write_eflags, void, tl, i32)
 DEF_HELPER_0(read_eflags, tl)
 DEF_HELPER_1(divb_AL, void, tl)
@@ -216,5 +217,6 @@ DEF_HELPER_2(rcrl, tl, tl, tl)
 DEF_HELPER_2(rclq, tl, tl, tl)
 DEF_HELPER_2(rcrq, tl, tl, tl)
 #endif
-
+DEF_HELPER_2(check, void, tl, int)
+DEF_HELPER_2(debug_info, void, int, tl)
 #include "def-helper.h"

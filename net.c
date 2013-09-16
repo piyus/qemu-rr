@@ -273,7 +273,8 @@ NICState *qemu_new_nic(NetClientInfo *info,
     assert(info->size >= sizeof(NICState));
 
     nc = qemu_new_net_client(info, conf->vlan, conf->peer, model, name);
-
+    rr_register_net_client(nc); 
+  
     nic = DO_UPCAST(NICState, nc, nc);
     nic->conf = conf;
     nic->opaque = opaque;

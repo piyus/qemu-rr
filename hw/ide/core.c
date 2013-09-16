@@ -30,6 +30,11 @@
 #include "qemu-timer.h"
 #include "sysemu.h"
 #include "dma.h"
+//#include "kvm_fifo.h"
+#include "record.h"
+//#include <linux/kvm.h>
+#include "cpus.h"
+#include "mydebug.h"
 
 #include <hw/ide/internal.h>
 

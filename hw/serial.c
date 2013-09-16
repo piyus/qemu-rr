@@ -29,6 +29,13 @@
 #include "qemu-timer.h"
 #include "sysemu.h"
 
+//#include <linux/kvm.h>
+//#include "kvm_fifo.h"
+#include "record.h"
+#include "rr_log.h"
+#include "cpus.h"
+#include "mydebug.h"
+
 //#define DEBUG_SERIAL
 
 #define UART_LCR_DLAB	0x80	/* Divisor latch access bit */
@@ -505,8 +512,11 @@ static void serial_ioport_write(void *opaque, uint32_t addr, uint32_t val)
 
 static uint32_t serial_ioport_read(void *opaque, uint32_t addr)
 {
+  uint32_t ret;
+  if (replaying_fp) {
+    ret = hw_replay(RR_ENTRY_TYPE_SER);
+  } else {
     SerialState *s = opaque;
-    uint32_t ret;
 
     addr &= 7;
     switch(addr) {
@@ -586,7 +596,11 @@ static uint32_t serial_ioport_read(void *opaque, uint32_t addr)
 #ifdef DEBUG_SERIAL
     printf("serial: read addr=0x%02x val=0x%02x\n", addr, ret);
 #endif
-    return ret;
+  }
+  if (recording_fp) {
+    hw_record(ret, RR_ENTRY_TYPE_SER);
+  }
+  return ret;
 }
 
 static int serial_can_receive(SerialState *s)

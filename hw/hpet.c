@@ -32,6 +32,13 @@
 #include "sysbus.h"
 #include "mc146818rtc.h"
 
+#include "rr_log.h"
+//#include <linux/kvm.h>
+//#include "kvm_fifo.h"
+#include "mydebug.h"
+#include "cpus.h"
+#include "record.h"
+
 //#define HPET_DEBUG
 #ifdef HPET_DEBUG
 #define DPRINTF printf
@@ -360,71 +367,96 @@ static uint32_t hpet_ram_readl(void *opaque, target_phys_addr_t addr)
 {
     HPETState *s = opaque;
     uint64_t cur_tick, index;
+    uint32_t ret;
 
-    DPRINTF("qemu: Enter hpet_ram_readl at %" PRIx64 "\n", addr);
-    index = addr;
-    /*address range of all TN regs*/
-    if (index >= 0x100 && index <= 0x3ff) {
+    if (replaying_fp) {
+      ret = hw_replay(RR_ENTRY_TYPE_HPET);
+    } else {
+      DPRINTF("qemu: Enter hpet_ram_readl at %" PRIx64 "\n", addr);
+      index = addr;
+      /*address range of all TN regs*/
+      if (index >= 0x100 && index <= 0x3ff) {
         uint8_t timer_id = (addr - 0x100) / 0x20;
         HPETTimer *timer = &s->timer[timer_id];
 
         if (timer_id > s->num_timers) {
-            DPRINTF("qemu: timer id out of range\n");
-            return 0;
+          DPRINTF("qemu: timer id out of range\n");
+          ret = 0;
+          goto done;
         }
 
         switch ((addr - 0x100) % 0x20) {
-        case HPET_TN_CFG:
-            return timer->config;
-        case HPET_TN_CFG + 4: // Interrupt capabilities
-            return timer->config >> 32;
-        case HPET_TN_CMP: // comparator register
-            return timer->cmp;
-        case HPET_TN_CMP + 4:
-            return timer->cmp >> 32;
-        case HPET_TN_ROUTE:
-            return timer->fsb;
-        case HPET_TN_ROUTE + 4:
-            return timer->fsb >> 32;
-        default:
+          case HPET_TN_CFG:
+            ret = timer->config;
+            goto done;
+          case HPET_TN_CFG + 4: // Interrupt capabilities
+            ret = timer->config >> 32;
+            goto done;
+          case HPET_TN_CMP: // comparator register
+            ret = timer->cmp;
+            goto done;
+          case HPET_TN_CMP + 4:
+            ret = timer->cmp >> 32;
+            goto done;
+          case HPET_TN_ROUTE:
+            ret = timer->fsb;
+            goto done;
+          case HPET_TN_ROUTE + 4:
+            ret = timer->fsb >> 32;
+            goto done;
+          default:
             DPRINTF("qemu: invalid hpet_ram_readl\n");
             break;
         }
-    } else {
+      } else {
         switch (index) {
-        case HPET_ID:
-            return s->capability;
-        case HPET_PERIOD:
-            return s->capability >> 32;
-        case HPET_CFG:
-            return s->config;
-        case HPET_CFG + 4:
+          case HPET_ID:
+            ret = s->capability;
+            goto done;
+          case HPET_PERIOD:
+            ret = s->capability >> 32;
+            goto done;
+          case HPET_CFG:
+            ret = s->config;
+            goto done;
+          case HPET_CFG + 4:
             DPRINTF("qemu: invalid HPET_CFG + 4 hpet_ram_readl \n");
-            return 0;
-        case HPET_COUNTER:
+            ret = 0;
+            goto done;
+          case HPET_COUNTER:
             if (hpet_enabled(s)) {
-                cur_tick = hpet_get_ticks(s);
+              cur_tick = hpet_get_ticks(s);
             } else {
-                cur_tick = s->hpet_counter;
+              cur_tick = s->hpet_counter;
             }
             DPRINTF("qemu: reading counter  = %" PRIx64 "\n", cur_tick);
-            return cur_tick;
-        case HPET_COUNTER + 4:
+            ret = cur_tick;
+            goto done;
+          case HPET_COUNTER + 4:
             if (hpet_enabled(s)) {
-                cur_tick = hpet_get_ticks(s);
+              cur_tick = hpet_get_ticks(s);
             } else {
-                cur_tick = s->hpet_counter;
+              cur_tick = s->hpet_counter;
             }
             DPRINTF("qemu: reading counter + 4  = %" PRIx64 "\n", cur_tick);
-            return cur_tick >> 32;
-        case HPET_STATUS:
-            return s->isr;
-        default:
+            ret = cur_tick >> 32;
+            goto done;
+          case HPET_STATUS:
+            ret = s->isr;
+            goto done;
+          default:
             DPRINTF("qemu: invalid hpet_ram_readl\n");
             break;
         }
+      }
+      ret = 0;
     }
-    return 0;
+done:
+    if (recording_fp) {
+      hw_record(ret,  RR_ENTRY_TYPE_HPET);
+    }
+
+    return ret;
 }
 
 #ifdef HPET_DEBUG

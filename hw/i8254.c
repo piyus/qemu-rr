@@ -26,6 +26,14 @@
 #include "isa.h"
 #include "qemu-timer.h"
 
+//#include <linux/kvm.h>
+//#include "kvm_fifo.h"
+#include "rr_log.h"
+#include "cpus.h"
+#include "mydebug.h"
+#include "record.h"
+
+
 //#define DEBUG_PIT
 
 #define RW_STATE_LSB 1
@@ -311,12 +319,16 @@ static void pit_ioport_write(void *opaque, uint32_t addr, uint32_t val)
     }
 }
 
+
 static uint32_t pit_ioport_read(void *opaque, uint32_t addr)
 {
     PITState *pit = opaque;
     int ret, count;
     PITChannelState *s;
 
+  if (replaying_fp) {
+    ret = hw_replay(RR_ENTRY_TYPE_PIT);
+  } else {
     addr &= 3;
     s = &pit->channels[addr];
     if (s->status_latched) {
@@ -361,7 +373,11 @@ static uint32_t pit_ioport_read(void *opaque, uint32_t addr)
             break;
         }
     }
-    return ret;
+  }
+  if (recording_fp) {
+    hw_record(ret, RR_ENTRY_TYPE_PIT);
+  }
+  return ret;
 }
 
 static void pit_irq_timer_update(PITChannelState *s, int64_t current_time)
@@ -390,6 +406,7 @@ static void pit_irq_timer(void *opaque)
 {
     PITChannelState *s = opaque;
 
+    //printf("%s().\n", __func__);
     pit_irq_timer_update(s, s->next_transition_time);
 }
 

@@ -21,8 +21,12 @@
 #include "disas.h"
 #include "tcg.h"
 #include "kvm.h"
+#include "rr_log.h"
+#include "record.h"
 #include "qemu-barrier.h"
-
+#include "cpus.h"
+#include "mydebug.h"
+#include "rr_log_consts.h"
 #if !defined(CONFIG_SOFTMMU)
 #undef EAX
 #undef ECX
@@ -38,13 +42,11 @@
 #include <sys/ucontext.h>
 #endif
 #endif
-
 #if defined(__sparc__) && !defined(CONFIG_SOLARIS)
 // Work around ugly bugs in glibc that mangle global register contents
 #undef env
 #define env cpu_single_env
 #endif
-
 int tb_invalidated_flag;
 
 //#define CONFIG_DEBUG_EXEC
@@ -148,7 +150,7 @@ static TranslationBlock *tb_find_slow(target_ulong pc,
         if (tb->pc == pc &&
             tb->page_addr[0] == phys_page1 &&
             tb->cs_base == cs_base &&
-            tb->flags == flags) {
+            tb->flags == flags) { 
             /* check next page if needed */
             if (tb->page_addr[1] != -1) {
                 virt_page2 = (pc & TARGET_PAGE_MASK) +
@@ -165,7 +167,6 @@ static TranslationBlock *tb_find_slow(target_ulong pc,
  not_found:
    /* if no translated code available, then translate it now */
     tb = tb_gen_code(env, pc, cs_base, flags, 0);
-
  found:
     /* we add the TB in the virtual pc hash table */
     env->tb_jmp_cache[tb_jmp_cache_hash_func(pc)] = tb;
@@ -184,7 +185,7 @@ static inline TranslationBlock *tb_find_fast(void)
     cpu_get_tb_cpu_state(env, &pc, &cs_base, &flags);
     tb = env->tb_jmp_cache[tb_jmp_cache_hash_func(pc)];
     if (unlikely(!tb || tb->pc != pc || tb->cs_base != cs_base ||
-                 tb->flags != flags)) {
+                tb->flags != flags)) {
         tb = tb_find_slow(pc, cs_base, flags);
     }
     return tb;
@@ -218,17 +219,58 @@ volatile sig_atomic_t exit_request;
 
 int cpu_exec(CPUState *env1)
 {
+
     volatile host_reg_t saved_env_reg;
     int ret, interrupt_request;
     TranslationBlock *tb;
     uint8_t *tc_ptr;
     unsigned long next_tb;
+    int temp_cpu_number, flag = 1;
 
-    if (cpu_halted(env1) == EXCP_HALTED)
-        return EXCP_HALTED;
+#ifdef CONFIG_IOTHREAD
+    if (kvm_enabled()) {
+      flag = 0;
+      rr_run = env1->kvm_run;
+    }
+#endif
 
-    cpu_single_env = env1;
+    if(flag) {     
+     if (cpu_halted(env1) == EXCP_HALTED && !replaying_fp)
+         return EXCP_HALTED;
 
+     if ((recording_fp || replaying_fp) && prev_cpu_number != cpu_number) {
+       if (recording_fp) {
+         temp_cpu_number = cpu_number;
+         cpu_number = prev_cpu_number;
+         hw_record(temp_cpu_number, RR_ENTRY_TYPE_CPU_SWITCH);
+         cpu_number = temp_cpu_number;
+       }
+       else if (replaying_fp && replay_entry.type == RR_ENTRY_TYPE_CPU_SWITCH) {
+         uint64_t eips[MAX_NUM_CPUS];
+         uint64_t ecxs[MAX_NUM_CPUS];
+         uint64_t n_branches[MAX_NUM_CPUS];
+
+         vcpus_get_eips(eips, MAX_NUM_CPUS);
+         vcpus_get_ecxs(ecxs, MAX_NUM_CPUS);
+         vcpus_get_n_branches(n_branches, MAX_NUM_CPUS);
+
+         if (eips[replay_entry.cpu] < replay_entry.eip || ecxs[replay_entry.cpu] != replay_entry.ecx || 
+                n_branches[replay_entry.cpu] != replay_entry.n_branches  || replay_entry.info != cpu_number) {
+           return EXCP_HALTED;
+         }
+         input_rr_record(replaying_fp, &replay_entry, replay_buf, replay_buf_size);
+       }
+       else {
+         return EXCP_HALTED;
+       }
+     }
+     prev_cpu_number = cpu_number;
+  }
+  else {
+     if (cpu_halted(env1) == EXCP_HALTED)
+         return EXCP_HALTED;
+  }
+     cpu_single_env = env1;
     /* the access to env below is actually saving the global register's
        value, so that files not including target-xyz/exec.h are free to
        use it.  */
@@ -236,7 +278,6 @@ int cpu_exec(CPUState *env1)
     saved_env_reg = (host_reg_t) env;
     barrier();
     env = env1;
-
     if (unlikely(exit_request)) {
         env->exit_request = 1;
     }
@@ -304,11 +345,13 @@ int cpu_exec(CPUState *env1)
                     /* simulate a real cpu exception. On i386, it can
                        trigger new exceptions, but we do not handle
                        double or triple faults yet. */
+                    
                     do_interrupt(env->exception_index,
                                  env->exception_is_int,
                                  env->error_code,
                                  env->exception_next_eip, 0);
                     /* successfully delivered */
+                    
                     env->old_exception = -1;
 #elif defined(TARGET_PPC)
                     do_interrupt(env);
@@ -338,9 +381,11 @@ int cpu_exec(CPUState *env1)
                 kvm_cpu_exec(env);
                 longjmp(env->jmp_env, 1);
             }
-
             next_tb = 0; /* force lookup of first TB */
             for(;;) {
+              if (replaying_fp){
+                helper_check(env->eip, 0);
+              }
                 interrupt_request = env->interrupt_request;
                 if (unlikely(interrupt_request)) {
                     if (unlikely(env->singlestep_enabled & SSTEP_NOIRQ)) {
@@ -381,20 +426,21 @@ int cpu_exec(CPUState *env1)
                             do_smm_enter();
                             next_tb = 0;
                         } else if ((interrupt_request & CPU_INTERRUPT_NMI) &&
-                                   !(env->hflags2 & HF2_NMI_MASK)) {
+                                   !(env->hflags2 & HF2_NMI_MASK) && !replaying_fp) {
                             env->interrupt_request &= ~CPU_INTERRUPT_NMI;
                             env->hflags2 |= HF2_NMI_MASK;
                             do_interrupt(EXCP02_NMI, 0, 0, 0, 1);
                             next_tb = 0;
-			} else if (interrupt_request & CPU_INTERRUPT_MCE) {
+			} else if ((interrupt_request & CPU_INTERRUPT_MCE) && !replaying_fp) {
                             env->interrupt_request &= ~CPU_INTERRUPT_MCE;
+                            ASSERT(0);
                             do_interrupt(EXCP12_MCHK, 0, 0, 0, 0);
                             next_tb = 0;
-                        } else if ((interrupt_request & CPU_INTERRUPT_HARD) &&
-                                   (((env->hflags2 & HF2_VINTR_MASK) && 
+                        } else if ((interrupt_request & CPU_INTERRUPT_HARD) && !replaying_fp &&
+                                   (((env->hflags2 & HF2_VINTR_MASK) &&
                                      (env->hflags2 & HF2_HIF_MASK)) ||
-                                    (!(env->hflags2 & HF2_VINTR_MASK) && 
-                                     (env->eflags & IF_MASK && 
+                                    (!(env->hflags2 & HF2_VINTR_MASK) &&
+                                     (env->eflags & IF_MASK &&
                                       !(env->hflags & HF_INHIBIT_IRQ_MASK))))) {
                             int intno;
                             svm_check_intercept(SVM_EXIT_INTR);
@@ -405,20 +451,21 @@ int cpu_exec(CPUState *env1)
 #undef env
                     env = cpu_single_env;
 #define env cpu_single_env
-#endif
+#endif                
                             do_interrupt(intno, 0, 0, 0, 1);
                             /* ensure that no TB jump will be modified as
                                the program flow was changed */
                             next_tb = 0;
 #if !defined(CONFIG_USER_ONLY)
-                        } else if ((interrupt_request & CPU_INTERRUPT_VIRQ) &&
-                                   (env->eflags & IF_MASK) && 
+                        } else if ((interrupt_request & CPU_INTERRUPT_VIRQ) && !replaying_fp &&
+                                   (env->eflags & IF_MASK) &&
                                    !(env->hflags & HF_INHIBIT_IRQ_MASK)) {
                             int intno;
                             /* FIXME: this should respect TPR */
                             svm_check_intercept(SVM_EXIT_VINTR);
                             intno = ldl_phys(env->vm_vmcb + offsetof(struct vmcb, control.int_vector));
                             qemu_log_mask(CPU_LOG_TB_IN_ASM, "Servicing virtual hardware INT=0x%02x\n", intno);
+                           
                             do_interrupt(intno, 0, 0, 0, 1);
                             env->interrupt_request &= ~CPU_INTERRUPT_VIRQ;
                             next_tb = 0;
@@ -548,11 +595,13 @@ int cpu_exec(CPUState *env1)
                         next_tb = 0;
                     }
                 }
+
                 if (unlikely(env->exit_request)) {
                     env->exit_request = 0;
                     env->exception_index = EXCP_INTERRUPT;
                     cpu_loop_exit();
                 }
+
 #if defined(DEBUG_DISAS) || defined(CONFIG_DEBUG_EXEC)
                 if (qemu_loglevel_mask(CPU_LOG_TB_CPU)) {
                     /* restore flags in standard format */
@@ -575,6 +624,7 @@ int cpu_exec(CPUState *env1)
                 tb = tb_find_fast();
                 /* Note: we do it here to avoid a gcc bug on Mac OS X when
                    doing it in tb_find_slow */
+
                 if (tb_invalidated_flag) {
                     /* as some TB could have been invalidated because
                        of memory exceptions while generating the code, we
@@ -590,11 +640,11 @@ int cpu_exec(CPUState *env1)
                 /* see if we can patch the calling TB. When the TB
                    spans two pages, we cannot safely do a direct
                    jump. */
+
                 if (next_tb != 0 && tb->page_addr[1] == -1) {
                     tb_add_jump((TranslationBlock *)(next_tb & ~3), next_tb & 3, tb);
                 }
                 spin_unlock(&tb_lock);
-
                 /* cpu_interrupt might be called while translating the
                    TB, but before it is linked into a potentially
                    infinite loop and becomes env->current_tb. Avoid
@@ -608,7 +658,7 @@ int cpu_exec(CPUState *env1)
 #undef env
                     env = cpu_single_env;
 #define env cpu_single_env
-#endif
+#endif           
                     next_tb = tcg_qemu_tb_exec(tc_ptr);
                     if ((next_tb & 3) == 2) {
                         /* Instruction counter expired.  */
@@ -644,7 +694,6 @@ int cpu_exec(CPUState *env1)
             } /* for(;;) */
         }
     } /* for(;;) */
-
 
 #if defined(TARGET_I386)
     /* restore flags in standard format */

@@ -178,5 +178,6 @@ int do_netdev_del(Monitor *mon, const QDict *qdict, QObject **ret_data);
 void qdev_set_nic_properties(DeviceState *dev, NICInfo *nd);
 
 int net_handle_fd_param(Monitor *mon, const char *param);
+extern bool asynchronous_net_deliveries;
 
 #endif

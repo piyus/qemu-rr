@@ -49,6 +49,7 @@ static void ide_map(PCIDevice *pci_dev, int region_num,
 {
     PCIIDEState *d = DO_UPCAST(PCIIDEState, dev, pci_dev);
     IDEBus *bus;
+    printf("%s() %d:\n", __func__, __LINE__);
 
     if (region_num <= 3) {
         bus = &d->bus[(region_num >> 1)];
@@ -95,7 +96,7 @@ static uint32_t bmdma_readb_common(PCIIDEState *pci_dev, BMDMAState *bm,
         break;
     }
 #ifdef DEBUG_IDE
-    printf("bmdma: readb 0x%02x : 0x%02x\n", addr, val);
+    printf("cmd646 bmdma: readb 0x%02x : 0x%02x\n", addr, val);
 #endif
     return val;
 }
@@ -164,6 +165,7 @@ static void bmdma_map(PCIDevice *pci_dev, int region_num,
 {
     PCIIDEState *d = DO_UPCAST(PCIIDEState, dev, pci_dev);
     int i;
+    printf("%s: %s() %d:\n", __FILE__, __func__, __LINE__);
 
     for(i = 0;i < 2; i++) {
         BMDMAState *bm = &d->bmdma[i];

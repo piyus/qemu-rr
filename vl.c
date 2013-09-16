@@ -59,7 +59,7 @@
 #ifdef __linux__
 #include <pty.h>
 #include <malloc.h>
-
+#include <mydebug.h>
 #include <linux/ppdev.h>
 #include <linux/parport.h>
 #endif
@@ -76,13 +76,13 @@
 #include <net/if.h>
 #include <syslog.h>
 #include <stropts.h>
+#include "rr_log.h"
 /* See MySQL bug #7156 (http://bugs.mysql.com/bug.php?id=7156) for
    discussion about Solaris header problems */
 extern int madvise(caddr_t, size_t, int);
 #endif
 #endif
 #endif
-
 #if defined(__OpenBSD__)
 #include <util.h>
 #endif
@@ -150,7 +150,9 @@ int main(int argc, char **argv)
 #ifdef CONFIG_VIRTFS
 #include "fsdev/qemu-fsdev.h"
 #endif
-
+//#include <linux/kvm.h>
+//#include "kvm_fifo.h"
+#include "record.h"
 #include "disas.h"
 
 #include "qemu_socket.h"
@@ -160,13 +162,18 @@ int main(int argc, char **argv)
 #include "qemu-queue.h"
 #include "cpus.h"
 #include "arch_init.h"
-
+#include "qdict.h"
 //#define DEBUG_NET
 //#define DEBUG_SLIRP
 
 #define DEFAULT_RAM_SIZE 128
 
 #define MAX_VIRTIO_CONSOLES 1
+#define BUFFER_MAX_SIZE 2048
+
+uint8_t data_buf[BUFFER_MAX_SIZE];
+
+//#include "qemu_record.h"
 
 static const char *data_dir;
 const char *bios_name = NULL;
@@ -204,7 +211,7 @@ int max_cpus = 0;
 int smp_cores = 1;
 int smp_threads = 1;
 const char *vnc_display;
-int acpi_enabled = 1;
+int acpi_enabled = 0;
 int no_hpet = 0;
 int fd_bootchk = 1;
 int no_reboot = 0;
@@ -315,7 +322,6 @@ void qemu_get_timedate(struct tm *tm, int offset)
 {
     time_t ti;
     struct tm *ret;
-
     time(&ti);
     ti += offset;
     if (rtc_date_offset == -1) {
@@ -334,7 +340,6 @@ void qemu_get_timedate(struct tm *tm, int offset)
 int qemu_timedate_diff(struct tm *tm)
 {
     time_t seconds;
-
     if (rtc_date_offset == -1)
         if (rtc_utc)
             seconds = mktimegm(tm);
@@ -349,7 +354,6 @@ int qemu_timedate_diff(struct tm *tm)
 void rtc_change_mon_event(struct tm *tm)
 {
     QObject *data;
-
     data = qobject_from_jsonf("{ 'offset': %d }", qemu_timedate_diff(tm));
     monitor_protocol_event(QEVENT_RTC_CHANGE, data);
     qobject_decref(data);
@@ -359,7 +363,6 @@ static void configure_rtc_date_offset(const char *startdate, int legacy)
 {
     time_t rtc_start_date;
     struct tm tm;
-
     if (!strcmp(startdate, "now") && legacy) {
         rtc_date_offset = -1;
     } else {
@@ -397,7 +400,6 @@ static void configure_rtc_date_offset(const char *startdate, int legacy)
 static void configure_rtc(QemuOpts *opts)
 {
     const char *value;
-
     value = qemu_opt_get(opts, "base");
     if (value) {
         if (!strcmp(value, "utc")) {
@@ -1264,7 +1266,6 @@ void main_loop_wait(int nonblocking)
 
     tv.tv_sec = timeout / 1000;
     tv.tv_usec = (timeout % 1000) * 1000;
-
     slirp_select_fill(&nfds, &rfds, &wfds, &xfds);
 
     qemu_mutex_unlock_iothread();
@@ -1287,7 +1288,6 @@ void main_loop_wait(int nonblocking)
             }
         }
     }
-
     slirp_select_poll(&rfds, &wfds, &xfds, (ret < 0));
 
     qemu_run_all_timers();
@@ -1312,13 +1312,10 @@ static int vm_can_run(void)
 }
 
 qemu_irq qemu_system_powerdown;
-
 static void main_loop(void)
 {
     int r;
-
     qemu_main_loop_start();
-
     for (;;) {
         do {
             bool nonblocking = false;
@@ -1799,11 +1796,21 @@ static const QEMUOption *lookup_opt(int argc, char **argv,
     return popt;
 }
 
+static void
+handle_segfault(int signum)
+{
+  printf("SEGFAULT SEEN\n");
+  mybacktrace();
+  exit(1);
+}
+
 int main(int argc, char **argv, char **envp)
 {
     const char *gdbstub_dev = NULL;
     int i;
     int snapshot, linux_boot;
+    const char *record_file = NULL;
+    const char *replay_file = NULL;
     const char *icount_option = NULL;
     const char *initrd_filename;
     const char *kernel_filename, *kernel_cmdline;
@@ -1825,7 +1832,9 @@ int main(int argc, char **argv, char **envp)
 
     atexit(qemu_run_exit_notifiers);
     error_set_progname(argv[0]);
-
+   /* if (kvm_enabled()) {
+     rr_progname = strdup(argv[0]);
+    } */
     init_clocks();
 
     qemu_cache_utils_init(envp);
@@ -1952,15 +1961,15 @@ int main(int argc, char **argv, char **envp)
                 break;
             case QEMU_OPTION_drive:
                 drive_add(NULL, "%s", optarg);
-	        break;
+	          break;
             case QEMU_OPTION_set:
                 if (qemu_set_option(optarg) != 0)
                     exit(1);
-	        break;
+	          break;
             case QEMU_OPTION_global:
                 if (qemu_global_option(optarg) != 0)
                     exit(1);
-	        break;
+	          break;
             case QEMU_OPTION_mtdblock:
                 drive_add(optarg, MTD_ALIAS);
                 break;
@@ -2618,6 +2627,12 @@ int main(int argc, char **argv, char **envp)
                     fclose(fp);
                     break;
                 }
+            case QEMU_OPTION_record:
+                  record_file = optarg;
+                  break;
+            case QEMU_OPTION_replay:
+                  replay_file = optarg;
+                  break;
             default:
                 os_parse_cmd_args(popt->index, optarg);
             }
@@ -2970,10 +2985,20 @@ int main(int argc, char **argv, char **envp)
     }
 
     qemu_system_reset();
+
     if (loadvm) {
         if (load_vmstate(loadvm) < 0) {
+            printf("load_vmstate(%s) failed.\n", loadvm);
             autostart = 0;
         }
+    }
+
+    if (replay_file) {
+      replay_start(replay_file);
+    }
+
+    if (record_file) {
+      record_start(record_file);
     }
 
     if (incoming) {
@@ -2989,9 +3014,15 @@ int main(int argc, char **argv, char **envp)
 
     os_setup_post();
 
+    signal(SIGINT, dump_stats); 
+    signal(SIGABRT, dump_stats);
+    signal(SIGSEGV, handle_segfault);
+
     main_loop();
     quit_timers();
     net_cleanup();
+
+    rr_shutdown();
 
     return 0;
 }

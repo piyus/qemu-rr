@@ -66,8 +66,9 @@ void bmdma_cmd_writeb(void *opaque, uint32_t addr, uint32_t val)
         if (!(bm->status & BM_STATUS_DMAING)) {
             bm->status |= BM_STATUS_DMAING;
             /* start dma transfer if possible */
-            if (bm->dma_cb)
+            if (bm->dma_cb) {
                 bm->dma_cb(bm, 0);
+            }
         }
         bm->cmd = val & 0x09;
     }

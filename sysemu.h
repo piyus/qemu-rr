@@ -79,6 +79,8 @@ int qemu_savevm_state_iterate(Monitor *mon, QEMUFile *f);
 int qemu_savevm_state_complete(Monitor *mon, QEMUFile *f);
 void qemu_savevm_state_cancel(Monitor *mon, QEMUFile *f);
 int qemu_loadvm_state(QEMUFile *f);
+int qemu_savevm_state(Monitor *mon, QEMUFile *f);
+int qemu_comparevm_state(char const *filename);
 
 /* SLIRP */
 void do_info_slirp(Monitor *mon);

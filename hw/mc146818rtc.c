@@ -29,6 +29,13 @@
 #include "isa.h"
 #include "mc146818rtc.h"
 
+#include "mydebug.h"
+#include "rr_log.h"
+//#include <linux/kvm.h>
+//#include "kvm_fifo.h"
+#include "cpus.h"
+#include "record.h"
+
 //#define DEBUG_CMOS
 //#define DEBUG_COALESCED
 
@@ -438,7 +445,7 @@ static void rtc_update_second2(void *opaque)
     qemu_mod_timer(s->second_timer, s->next_second_time);
 }
 
-static uint32_t cmos_ioport_read(void *opaque, uint32_t addr)
+static uint32_t __cmos_ioport_read(void *opaque, uint32_t addr)
 {
     RTCState *s = opaque;
     int ret;
@@ -487,6 +494,21 @@ static uint32_t cmos_ioport_read(void *opaque, uint32_t addr)
                      s->cmos_index, ret);
         return ret;
     }
+}
+
+
+static uint32_t cmos_ioport_read(void *opaque, uint32_t addr)
+{
+  uint32_t ret;
+  if (replaying_fp) {
+    ret = hw_replay(RR_ENTRY_TYPE_CMOS);
+  } else {
+    ret = __cmos_ioport_read(opaque, addr);
+  }
+  if (recording_fp) {
+    hw_record(ret, RR_ENTRY_TYPE_CMOS);
+  }
+  return ret;
 }
 
 void rtc_set_memory(ISADevice *dev, int addr, int val)

@@ -28,6 +28,7 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <zlib.h>
+#include <mydebug.h>
 
 /* Needed early for CONFIG_BSD etc. */
 #include "config-host.h"
@@ -1546,7 +1547,7 @@ void qemu_savevm_state_cancel(Monitor *mon, QEMUFile *f)
     }
 }
 
-static int qemu_savevm_state(Monitor *mon, QEMUFile *f)
+int qemu_savevm_state(Monitor *mon, QEMUFile *f)
 {
     int saved_vm_running;
     int ret;
@@ -1663,6 +1664,39 @@ typedef struct LoadStateEntry {
     int section_id;
     int version_id;
 } LoadStateEntry;
+
+int qemu_comparevm_state(char const *input_filename)
+{
+  QEMUFile *f;
+  char const *snapshot_filename = "tmp.snapshot";
+  char command[4096];
+  int ret;
+
+  f = qemu_fopen(snapshot_filename, "wb");
+  ASSERT(f);
+  ret = qemu_savevm_state(NULL, f);
+  qemu_fclose(f);
+
+  snprintf(command, sizeof command, "/home/sbansal/kvm-rr/qemu-0.13.0.rr/compare_snapshots %s %s", input_filename, snapshot_filename);
+  ret = system(command);
+
+  if (ret == -1) {
+    printf("system() failed\n");
+    exit(1);
+  }
+
+  if (   WIFSIGNALED(ret)
+      && (WTERMSIG(ret) == SIGINT || WTERMSIG(ret) == SIGQUIT)) {
+    printf("%s: command interrupted.\n", __func__);
+    exit(1);
+  }
+
+  if (WEXITSTATUS(ret) ==127) {
+    printf("%s: /bin/sh failed.\n", __func__);
+  }
+
+  return WEXITSTATUS(ret);
+}
 
 int qemu_loadvm_state(QEMUFile *f)
 {

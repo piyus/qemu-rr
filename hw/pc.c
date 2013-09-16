@@ -39,6 +39,7 @@
 #include "msix.h"
 #include "sysbus.h"
 #include "sysemu.h"
+#include "record.h"
 
 /* output Bochs bios info messages */
 //#define DEBUG_BIOS
@@ -1020,6 +1021,7 @@ void pc_basic_device_init(qemu_irq *isa_irq,
     ISADevice *i8042;
     qemu_irq *cpu_exit_irq;
 
+    //printf("%s()\n", __func__);
     register_ioport_write(0x80, 1, 1, ioport80_write, NULL);
 
     register_ioport_write(0xf0, 1, 1, ioportF0_write, NULL);

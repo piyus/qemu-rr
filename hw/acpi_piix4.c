@@ -23,6 +23,15 @@
 #include "acpi.h"
 #include "sysemu.h"
 
+//#include <linux/kvm.h>
+//#include "kvm_fifo.h"
+#include "rr_log.h"
+#include "record.h"
+#include "cpus.h"
+#include "mydebug.h"
+
+
+
 //#define DEBUG
 
 #ifdef DEBUG
@@ -184,22 +193,30 @@ static uint32_t pm_ioport_readw(void *opaque, uint32_t addr)
     PIIX4PMState *s = opaque;
     uint32_t val;
 
-    addr &= 0x3f;
-    switch(addr) {
-    case 0x00:
-        val = get_pmsts(s);
-        break;
-    case 0x02:
-        val = s->pmen;
-        break;
-    case 0x04:
-        val = s->pmcntrl;
-        break;
-    default:
-        val = 0;
-        break;
+    if (replaying_fp) {
+      val = hw_replay(RR_ENTRY_TYPE_PM);
+    } else {
+      addr &= 0x3f;
+      switch(addr) {
+        case 0x00:
+          val = get_pmsts(s);
+          break;
+        case 0x02:
+          val = s->pmen;
+          break;
+        case 0x04:
+          val = s->pmcntrl;
+          break;
+        default:
+          val = 0;
+          break;
+      }
+      PIIX4_DPRINTF("PM readw port=0x%04x val=0x%04x\n", addr, val);
     }
-    PIIX4_DPRINTF("PM readw port=0x%04x val=0x%04x\n", addr, val);
+    if (recording_fp) {
+      hw_record(val, RR_ENTRY_TYPE_PM);
+    }
+
     return val;
 }
 
@@ -209,21 +226,30 @@ static void pm_ioport_writel(void *opaque, uint32_t addr, uint32_t val)
     PIIX4_DPRINTF("PM writel port=0x%04x val=0x%08x\n", addr & 0x3f, val);
 }
 
+
 static uint32_t pm_ioport_readl(void *opaque, uint32_t addr)
 {
     PIIX4PMState *s = opaque;
     uint32_t val;
 
-    addr &= 0x3f;
-    switch(addr) {
-    case 0x08:
-        val = get_pmtmr(s);
-        break;
-    default:
-        val = 0;
-        break;
+    if (replaying_fp) {
+      val = hw_replay(RR_ENTRY_TYPE_PM);
+    } else {
+      addr &= 0x3f;
+      switch(addr) {
+        case 0x08:
+          val = get_pmtmr(s);
+          break;
+        default:
+          val = 0;
+          break;
+      }
+      PIIX4_DPRINTF("PM readl port=0x%04x val=0x%08x\n", addr, val);
     }
-    PIIX4_DPRINTF("PM readl port=0x%04x val=0x%08x\n", addr, val);
+
+    if (recording_fp) {
+      hw_record(val, RR_ENTRY_TYPE_PM);
+    }
     return val;
 }
 

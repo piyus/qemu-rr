@@ -17,14 +17,16 @@
  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "mydebug.h"
 #include "exec.h"
 #include "exec-all.h"
 #include "host-utils.h"
 #include "ioport.h"
-
+#include "../rr_log.h"
+#include "../record.h"
+#include "../cpus.h"
 //#define DEBUG_PCALL
-
-
+#define debug_rr
 #ifdef DEBUG_PCALL
 #  define LOG_PCALL(...) qemu_log_mask(CPU_LOG_PCALL, ## __VA_ARGS__)
 #  define LOG_PCALL_STATE(env) \
@@ -33,8 +35,7 @@
 #  define LOG_PCALL(...) do { } while (0)
 #  define LOG_PCALL_STATE(env) do { } while (0)
 #endif
-
-
+#define DPRINTF(fmt, ...) do {} while(0)
 #if 0
 #define raise_exception_err(a, b)\
 do {\
@@ -42,6 +43,7 @@ do {\
     (raise_exception_err)(a, b);\
 } while (0)
 #endif
+static bool qemu_rr_is_excpn;
 
 static const uint8_t parity_table[256] = {
     CC_P, 0, 0, CC_P, 0, CC_P, CC_P, 0,
@@ -105,6 +107,16 @@ static const CPU86_LDouble f15rk[7] =
     3.32192809488736234781L,  /*l2t*/
 };
 
+static void
+print_memory_location (uint32_t addr, uint64_t at_branch, char *func)
+{
+   uint8_t buf[1];
+
+//   if (env->n_branches == at_branch) {
+      cpu_physical_memory_read(addr, buf, 1);
+      printf("%s(): at 0x%x=%02x\n",func, addr, buf[0]);
+//    }
+}
 /* broken thread support */
 
 static spinlock_t global_cpu_lock = SPIN_LOCK_UNLOCKED;
@@ -127,10 +139,17 @@ void helper_write_eflags(target_ulong t0, uint32_t update_mask)
 target_ulong helper_read_eflags(void)
 {
     uint32_t eflags;
+
     eflags = helper_cc_compute_all(CC_OP);
     eflags |= (DF & DF_MASK);
     eflags |= env->eflags & ~(VM_MASK | RF_MASK);
     return eflags;
+}
+
+void
+helper_set_eflags(int a)
+{
+  imul_cc_src = compute_eflags();  
 }
 
 /* return non zero if error */
@@ -149,8 +168,14 @@ static inline int load_segment(uint32_t *e1_ptr, uint32_t *e2_ptr,
     if ((index + 7) > dt->limit)
         return -1;
     ptr = dt->base + index;
+    DPRINTF("%s(): ptr=%x\n",__func__,ptr);
     *e1_ptr = ldl_kernel(ptr);
     *e2_ptr = ldl_kernel(ptr + 4);
+
+    if (!(*e2_ptr & DESC_A_MASK)) {
+       *e2_ptr |= DESC_A_MASK;
+       stl_kernel(ptr + 4, *e2_ptr);
+    }
     return 0;
 }
 
@@ -187,19 +212,6 @@ static inline void get_ss_esp_from_tss(uint32_t *ss_ptr,
                                        uint32_t *esp_ptr, int dpl)
 {
     int type, index, shift;
-
-#if 0
-    {
-        int i;
-        printf("TR: base=%p limit=%x\n", env->tr.base, env->tr.limit);
-        for(i=0;i<env->tr.limit;i++) {
-            printf("%02x ", env->tr.base[i]);
-            if ((i & 7) == 7) printf("\n");
-        }
-        printf("\n");
-    }
-#endif
-
     if (!(env->tr.flags & DESC_P_MASK))
         cpu_abort(env, "invalid tss");
     type = (env->tr.flags >> DESC_TYPE_SHIFT) & 0xf;
@@ -223,7 +235,6 @@ static void tss_load_seg(int seg_reg, int selector)
 {
     uint32_t e1, e2;
     int rpl, dpl, cpl;
-
     if ((selector & 0xfffc) != 0) {
         if (load_segment(&e1, &e2, selector) != 0)
             raise_exception_err(EXCP0A_TSS, selector & 0xfffc);
@@ -289,6 +300,7 @@ static void switch_tss(int tss_selector,
     type = (e2 >> DESC_TYPE_SHIFT) & 0xf;
     LOG_PCALL("switch_tss: sel=0x%04x type=%d src=%d\n", tss_selector, type, source);
 
+    DPRINTF("%s() %d: type=%d\n",__func__, __LINE__, type);
     /* if task gate, we read the TSS segment and we load it */
     if (type == 5) {
         if (!(e2 & DESC_P_MASK))
@@ -521,7 +533,6 @@ static void switch_tss(int tss_selector,
 static inline void check_io(int addr, int size)
 {
     int io_offset, val, mask;
-
     /* TSS must be a valid 32 bit one */
     if (!(env->tr.flags & DESC_P_MASK) ||
         ((env->tr.flags >> DESC_TYPE_SHIFT) & 0xf) != 9 ||
@@ -559,32 +570,110 @@ void helper_check_iol(uint32_t t0)
 
 void helper_outb(uint32_t port, uint32_t data)
 {
+    //rr_check_entry(env, NULL);
     cpu_outb(port, data & 0xff);
 }
 
 target_ulong helper_inb(uint32_t port)
 {
-    return cpu_inb(port);
+//  return cpu_inb(port);
+    return rr_inb(NULL, port);
 }
 
 void helper_outw(uint32_t port, uint32_t data)
 {
+    //rr_check_entry(env, NULL);
     cpu_outw(port, data & 0xffff);
 }
 
 target_ulong helper_inw(uint32_t port)
 {
-    return cpu_inw(port);
+//  return cpu_inw(port);
+    return rr_inw(NULL, port);
 }
 
 void helper_outl(uint32_t port, uint32_t data)
 {
+    //rr_check_entry(env, NULL);
     cpu_outl(port, data);
 }
 
 target_ulong helper_inl(uint32_t port)
 {
-    return cpu_inl(port);
+//  return cpu_inl(port);
+    return rr_inl(NULL, port);
+}
+
+static inline bool rr_entry_type_is_external (int type)
+{
+  return (type == RR_ENTRY_TYPE_INTR || type == RR_ENTRY_TYPE_NET || 
+                    type == RR_ENTRY_TYPE_CPU_SWITCH);
+}
+void
+helper_check(target_ulong curr_eip , int curr_cc_op)
+{
+  if (replaying_fp) {
+    if(replay_entry.ecx == ECX && replay_entry.n_branches == env->n_branches 
+         && replay_entry.cpu == cpu_number && rr_entry_type_is_external(replay_entry.type)){
+      if(env->eip != curr_eip) {
+        env->eip = curr_eip;
+      }
+      if (curr_cc_op != CC_OP_DYNAMIC) {
+        env->cc_op = curr_cc_op;
+      }
+      if (replay_entry.type == RR_ENTRY_TYPE_CPU_SWITCH && 
+                                 replay_entry.eip <= curr_eip) {
+        env->exception_index = EXCP_INTERRUPT;
+        cpu_loop_exit();
+      }
+      else if (replay_entry.type == RR_ENTRY_TYPE_NET) {
+        do_call_e1000_receive();
+        helper_check(curr_eip, curr_cc_op);
+      }
+      else if (replay_entry.eip == env->eip) {
+        raise_replay_interrupt (replay_entry.info);
+      }
+    }
+#ifdef debug_rr
+    else if (env->n_branches > replay_entry.n_branches) {
+      if (replay_entry.type == RR_ENTRY_TYPE_INVALID) {
+        replay_stop();
+      } else {
+        ASSERT(0);
+      }
+    }
+#endif
+  }
+}
+
+void 
+helper_debug_info(int insn, target_ulong curr_eip)
+{
+#if 0
+  static int flag;
+  static int j, old_cpu;
+  static uint64_t old_br;
+
+
+  if (old_cpu == cpu_number && ((env->n_branches - old_br)>1 || (env->n_branches - old_br)<0)) {
+  }
+  old_cpu = cpu_number;
+  old_br = env->n_branches;
+
+  //if (j>0)
+  //    print_debug_info();
+  if (env->n_branches >= 0x2500000)
+    flag = 1;
+  if (env->n_branches >= 0x3500000)
+    flag = 0;
+//  if (flag)
+//    if (env->n_branches == 0xc3aa)
+//    printf("EIP=%08x INSN=%x BRANCH=%llx CPU=%d ECX=%08x\n", curr_eip, insn, env->n_branches, cpu_number, ECX);
+/*    print_state();
+    printf("\n---------------------------------\n");
+  }*/
+  //}
+#endif
 }
 
 static inline unsigned int get_sp_mask(unsigned int e2)
@@ -671,15 +760,18 @@ static void do_interrupt_protected(int intno, int is_int, int error_code,
         old_eip = next_eip;
     else
         old_eip = env->eip;
-
     dt = &env->idt;
     if (intno * 8 + 7 > dt->limit)
         raise_exception_err(EXCP0D_GPF, intno * 8 + 2);
     ptr = dt->base + intno * 8;
     e1 = ldl_kernel(ptr);
     e2 = ldl_kernel(ptr + 4);
+
+    DPRINTF("%s() %d: ptr=%x\n",__func__, __LINE__, ptr);
     /* check gate type */
     type = (e2 >> DESC_TYPE_SHIFT) & 0x1f;
+    
+    DPRINTF("%s() %d: type=%d\n",__func__, __LINE__, type);
     switch(type) {
     case 5: /* task gate */
         /* must do that check here to return the correct error code */
@@ -738,6 +830,7 @@ static void do_interrupt_protected(int intno, int is_int, int error_code,
         raise_exception_err(EXCP0B_NOSEG, selector & 0xfffc);
     if (!(e2 & DESC_C_MASK) && dpl < cpl) {
         /* to inner privilege */
+        DPRINTF("%s() %d: to inner priviledge\n",__func__, __LINE__);
         get_ss_esp_from_tss(&ss, &esp, dpl);
         if ((ss & 0xfffc) == 0)
             raise_exception_err(EXCP0A_TSS, ss & 0xfffc);
@@ -759,6 +852,7 @@ static void do_interrupt_protected(int intno, int is_int, int error_code,
         ssp = get_seg_base(ss_e1, ss_e2);
     } else if ((e2 & DESC_C_MASK) || dpl == cpl) {
         /* to same privilege */
+        DPRINTF("%s() %d: to same priviledge\n",__func__, __LINE__);
         if (env->eflags & VM_MASK)
             raise_exception_err(EXCP0D_GPF, selector & 0xfffc);
         new_stack = 0;
@@ -767,6 +861,7 @@ static void do_interrupt_protected(int intno, int is_int, int error_code,
         esp = ESP;
         dpl = cpl;
     } else {
+        DPRINTF("%s() %d: new priviledge\n",__func__, __LINE__);
         raise_exception_err(EXCP0D_GPF, selector & 0xfffc);
         new_stack = 0; /* avoid warning */
         sp_mask = 0; /* avoid warning */
@@ -775,7 +870,7 @@ static void do_interrupt_protected(int intno, int is_int, int error_code,
     }
 
     shift = type >> 3;
-
+    DPRINTF("%s() %d: shift=%d new_stack=%d\n",__func__, __LINE__,shift, new_stack);
 #if 0
     /* XXX: check that enough room is available */
     push_size = 6 + (new_stack << 2) + (has_error_code << 1);
@@ -783,6 +878,8 @@ static void do_interrupt_protected(int intno, int is_int, int error_code,
         push_size += 8;
     push_size <<= shift;
 #endif
+
+    DPRINTF("%s() %d: ssp=%x esp=%x sp_mask=%x has=%d err_code=%x type=%d\n",__func__, __LINE__,ssp, esp, sp_mask, has_error_code, error_code, type);
     if (shift == 1) {
         if (new_stack) {
             if (env->eflags & VM_MASK) {
@@ -795,6 +892,7 @@ static void do_interrupt_protected(int intno, int is_int, int error_code,
             PUSHL(ssp, esp, sp_mask, ESP);
         }
         PUSHL(ssp, esp, sp_mask, compute_eflags());
+//        DPRINTF("Compute EFLAGS=%08x\n",compute_eflags());
         PUSHL(ssp, esp, sp_mask, env->segs[R_CS].selector);
         PUSHL(ssp, esp, sp_mask, old_eip);
         if (has_error_code) {
@@ -839,7 +937,9 @@ static void do_interrupt_protected(int intno, int is_int, int error_code,
                    e2);
     cpu_x86_set_cpl(env, dpl);
     env->eip = offset;
-
+/*    if (intno == 14) {
+      printf("EIP_NOW AFTER=%08x\n",env->eip);
+    }*/
     /* interrupt gate clear IF mask */
     if ((type & 1) == 0) {
         env->eflags &= ~IF_MASK;
@@ -864,11 +964,6 @@ static void do_interrupt_protected(int intno, int is_int, int error_code,
 static inline target_ulong get_rsp_from_tss(int level)
 {
     int index;
-
-#if 0
-    printf("TR: base=" TARGET_FMT_lx " limit=%x\n",
-           env->tr.base, env->tr.limit);
-#endif
 
     if (!(env->tr.flags & DESC_P_MASK))
         cpu_abort(env, "invalid tss");
@@ -1008,7 +1103,6 @@ void helper_syscall(int next_eip_addend)
 void helper_syscall(int next_eip_addend)
 {
     int selector;
-
     if (!(env->efer & MSR_EFER_SCE)) {
         raise_exception_err(EXCP06_ILLOP, 0);
     }
@@ -1063,7 +1157,6 @@ void helper_syscall(int next_eip_addend)
 void helper_sysret(int dflag)
 {
     int cpl, selector;
-
     if (!(env->efer & MSR_EFER_SCE)) {
         raise_exception_err(EXCP06_ILLOP, 0);
     }
@@ -1124,7 +1217,6 @@ static void do_interrupt_real(int intno, int is_int, int error_code,
     int selector;
     uint32_t offset, esp;
     uint32_t old_cs, old_eip;
-
     /* real mode (simpler !) */
     dt = &env->idt;
     if (intno * 4 + 3 > dt->limit)
@@ -1138,6 +1230,7 @@ static void do_interrupt_real(int intno, int is_int, int error_code,
         old_eip = next_eip;
     else
         old_eip = env->eip;
+
     old_cs = env->segs[R_CS].selector;
     /* XXX: use SS segment size ? */
     PUSHW(ssp, esp, 0xffff, compute_eflags());
@@ -1212,6 +1305,18 @@ static void handle_even_inj(int intno, int is_int, int error_code,
 void do_interrupt(int intno, int is_int, int error_code,
                   target_ulong next_eip, int is_hw)
 {
+  //printf("%s(). %lld INTR=%d\n",__func__, env->n_branches, intno);
+  if (recording_fp && !is_int && !qemu_rr_is_excpn) {
+    hw_record(intno, RR_ENTRY_TYPE_INTR);
+  }
+  if (replaying_fp && !is_int && !qemu_rr_is_excpn) {
+    is_hw = 1;
+    input_rr_record(replaying_fp, &replay_entry, replay_buf, replay_buf_size);
+  }
+  qemu_rr_is_excpn = false;
+  env->n_branches++;
+
+  DPRINTF("%s(). %lld INTR=%d\n",__func__, env->n_branches, intno);
     if (qemu_loglevel_mask(CPU_LOG_INT)) {
         if ((env->cr[0] & CR0_PE_MASK)) {
             static int count;
@@ -1243,10 +1348,12 @@ void do_interrupt(int intno, int is_int, int error_code,
             count++;
         }
     }
+
     if (env->cr[0] & CR0_PE_MASK) {
 #if !defined(CONFIG_USER_ONLY)
         if (env->hflags & HF_SVMI_MASK)
             handle_even_inj(intno, is_int, error_code, is_hw, 0);
+
 #endif
 #ifdef TARGET_X86_64
         if (env->hflags & HF_LMA_MASK) {
@@ -1258,8 +1365,9 @@ void do_interrupt(int intno, int is_int, int error_code,
         }
     } else {
 #if !defined(CONFIG_USER_ONLY)
-        if (env->hflags & HF_SVMI_MASK)
+        if (env->hflags & HF_SVMI_MASK){
             handle_even_inj(intno, is_int, error_code, is_hw, 1);
+        }
 #endif
         do_interrupt_real(intno, is_int, error_code, next_eip);
     }
@@ -1332,7 +1440,7 @@ static void QEMU_NORETURN raise_interrupt(int intno, int is_int, int error_code,
     } else {
         helper_svm_check_intercept_param(SVM_EXIT_SWINT, 0);
     }
-
+     
     env->exception_index = intno;
     env->error_code = error_code;
     env->exception_is_int = is_int;
@@ -1340,15 +1448,37 @@ static void QEMU_NORETURN raise_interrupt(int intno, int is_int, int error_code,
     cpu_loop_exit();
 }
 
+/* record replay */
+
+void 
+raise_replay_interrupt (int intno)
+{
+  raise_interrupt(intno, 0, 0, 0);
+}
+
+
 /* shortcuts to generate exceptions */
 
 void raise_exception_err(int exception_index, int error_code)
 {
+    //DPRINTF("%s():%x: branches=%lld\n",__func__, exception_index, env->n_branches);
+//    printf("QEMU: %s(). %llx, EXCEP_INDX=%d,ERR_CODE=%d\n",__func__,
+//                     env->n_branches, exception_index, error_code);
+    if (recording_fp || replaying_fp) {
+      qemu_rr_is_excpn = true;
+    }
     raise_interrupt(exception_index, 0, error_code, 0);
 }
 
+
 void raise_exception(int exception_index)
 {
+    //DPRINTF("%s():%x\n",__func__, exception_index);
+//    printf("QEMU: %s(). %llx, EXCEP_INDX=%d\n",__func__,
+//                     env->n_branches, exception_index);
+    if (recording_fp || replaying_fp) {
+      qemu_rr_is_excpn = true;
+    }
     raise_interrupt(exception_index, 0, 0, 0);
 }
 
@@ -1382,7 +1512,6 @@ void do_smm_enter(void)
     target_ulong sm_state;
     SegmentCache *dt;
     int i, offset;
-
     qemu_log_mask(CPU_LOG_INT, "SMM: enter\n");
     log_cpu_state_mask(CPU_LOG_INT, env, X86_DUMP_CCOP);
 
@@ -2196,7 +2325,7 @@ void helper_ljmp_protected(int new_cs, target_ulong new_eip,
     int gate_cs, type;
     uint32_t e1, e2, cpl, dpl, rpl, limit;
     target_ulong next_eip;
-
+    
     if ((new_cs & 0xfffc) == 0)
         raise_exception_err(EXCP0D_GPF, 0);
     if (load_segment(&e1, &e2, new_cs) != 0)
@@ -2286,7 +2415,7 @@ void helper_lcall_real(int new_cs, target_ulong new_eip1,
     int new_eip;
     uint32_t esp, esp_mask;
     target_ulong ssp;
-
+    
     new_eip = new_eip1;
     esp = ESP;
     esp_mask = get_sp_mask(env->segs[R_SS].flags);
@@ -2314,7 +2443,6 @@ void helper_lcall_protected(int new_cs, target_ulong new_eip,
     uint32_t ss = 0, ss_e1 = 0, ss_e2 = 0, sp, type, ss_dpl, sp_mask;
     uint32_t val, limit, old_sp_mask;
     target_ulong ssp, old_ssp, next_eip;
-
     next_eip = env->eip + next_eip_addend;
     LOG_PCALL("lcall %04x:%08x s=%d\n", new_cs, (uint32_t)new_eip, shift);
     LOG_PCALL_STATE(env);
@@ -2572,13 +2700,12 @@ static inline void helper_ret_protected(int shift, int is_iret, int addend)
     uint32_t e1, e2, ss_e1, ss_e2;
     int cpl, dpl, rpl, eflags_mask, iopl;
     target_ulong ssp, sp, new_eip, new_esp, sp_mask;
-
 #ifdef TARGET_X86_64
     if (shift == 2)
         sp_mask = -1;
     else
 #endif
-        sp_mask = get_sp_mask(env->segs[R_SS].flags);
+    sp_mask = get_sp_mask(env->segs[R_SS].flags);
     sp = ESP;
     ssp = env->segs[R_SS].base;
     new_eflags = 0; /* avoid warning */
@@ -2743,7 +2870,6 @@ static inline void helper_ret_protected(int shift, int is_iret, int addend)
     POPL(ssp, sp, sp_mask, new_ds);
     POPL(ssp, sp, sp_mask, new_fs);
     POPL(ssp, sp, sp_mask, new_gs);
-
     /* modify processor state */
     load_eflags(new_eflags, TF_MASK | AC_MASK | ID_MASK |
                 IF_MASK | IOPL_MASK | VM_MASK | NT_MASK | VIF_MASK | VIP_MASK);
@@ -2894,6 +3020,8 @@ target_ulong helper_read_crN(int reg)
         }
         break;
     }
+    
+    //print_memory_location(0x2525, 939521, __func__);
     return val;
 }
 
@@ -2920,6 +3048,7 @@ void helper_write_crN(int reg, target_ulong t0)
         env->cr[reg] = t0;
         break;
     }
+    //print_memory_location(0x2525, 939521, __func__);
 }
 
 void helper_movl_drN_T0(int reg, target_ulong t0)
@@ -2964,13 +3093,20 @@ void helper_invlpg(target_ulong addr)
 void helper_rdtsc(void)
 {
     uint64_t val;
-
     if ((env->cr[4] & CR4_TSD_MASK) && ((env->hflags & HF_CPL_MASK) != 0)) {
         raise_exception(EXCP0D_GPF);
     }
     helper_svm_check_intercept_param(SVM_EXIT_RDTSC, 0);
 
-    val = cpu_get_tsc(env) + env->tsc_offset;
+    if (replaying_fp) {
+      val = hw_replay(RR_ENTRY_TYPE_RDTSC);
+    }
+    else {
+      val = cpu_get_tsc(env) + env->tsc_offset;
+    }
+    if (recording_fp) {
+      hw_record(val, RR_ENTRY_TYPE_RDTSC);
+    }
     EAX = (uint32_t)(val);
     EDX = (uint32_t)(val >> 32);
 }
@@ -3139,7 +3275,6 @@ void helper_wrmsr(void)
 void helper_rdmsr(void)
 {
     uint64_t val;
-
     helper_svm_check_intercept_param(SVM_EXIT_MSR, 0);
 
     switch((uint32_t)ECX) {
@@ -3245,6 +3380,7 @@ void helper_rdmsr(void)
         break;
     case MSR_MCG_CAP:
         val = env->mcg_cap;
+        //val = 0x20;
         break;
     case MSR_MCG_CTL:
         if (env->mcg_cap & MCG_CTL_P)
@@ -4366,7 +4502,16 @@ void helper_fxsave(target_ulong ptr, int data64)
     for(i = 0; i < 8; i++) {
         fptag |= (env->fptags[i] << i);
     }
+    //if(env->n_branches == 57741594) {
+      //printf("%s() ptr=%x\n",__func__, ptr);
+      //printf("env->fpuc=%x fpus=%x fptag=%x\n",env->fpuc,fpus,fptag);
+    //}
+/*    uint8_t buf[1];
+    cpu_physical_memory_read(0x16f5e90, buf, 1);
+    printf("val at loc=%x\n",buf[0]);*/
     stw(ptr, env->fpuc);
+/*    cpu_physical_memory_read(0x16f5e90, buf, 1);
+    printf("val at loc=%x\n",buf[0]);*/
     stw(ptr + 2, fpus);
     stw(ptr + 4, fptag ^ 0xff);
 #ifdef TARGET_X86_64
@@ -4380,6 +4525,15 @@ void helper_fxsave(target_ulong ptr, int data64)
         stl(ptr + 0x0c, 0); /* sel  */
         stl(ptr + 0x10, 0); /* dp */
         stl(ptr + 0x14, 0); /* sel  */
+/*        cpu_physical_memory_read(0x16f5ea8, buf, 1);
+          printf("val at loc=0x16f5ea8=%x\n",buf[0]);
+        stl(ptr + 0x18, 0x1f80);
+        cpu_physical_memory_read(0x16f5ea8, buf, 1);
+          printf("val at loc=%x=%x\n",ptr + 0x18,buf[0]);*/
+        //uint8_t buf[2];
+        //buf[0] = 0x0;
+        //buf[1] = 0x0;
+        //cpu_physical_memory_write(0x16f5ea8, buf, 2);
     }
 
     addr = ptr + 0x20;
@@ -4391,6 +4545,7 @@ void helper_fxsave(target_ulong ptr, int data64)
 
     if (env->cr[4] & CR4_OSFXSR_MASK) {
         /* XXX: finish it */
+        //env->mxcsr = 0x1f80;
         stl(ptr + 0x18, env->mxcsr); /* mxcsr */
         stl(ptr + 0x1c, 0x0000ffff); /* mxcsr_mask */
         if (env->hflags & HF_CS64_MASK)
@@ -4403,7 +4558,10 @@ void helper_fxsave(target_ulong ptr, int data64)
           || (env->hflags & HF_CPL_MASK)
           || !(env->hflags & HF_LMA_MASK)) {
             for(i = 0; i < nb_xmm_regs; i++) {
+                //printf("addr=%x i=%d xmm_reg\n",addr,env->xmm_regs[i].XMM_Q(0));
                 stq(addr, env->xmm_regs[i].XMM_Q(0));
+
+                //printf("addr=%x i=%d xmm_reg\n",addr+8,env->xmm_regs[i].XMM_Q(1));
                 stq(addr + 8, env->xmm_regs[i].XMM_Q(1));
                 addr += 16;
             }
@@ -4823,7 +4981,6 @@ void tlb_fill(target_ulong addr, int is_write, int mmu_idx, void *retaddr)
        generated code */
     saved_env = env;
     env = cpu_single_env;
-
     ret = cpu_x86_handle_mmu_fault(env, addr, is_write, mmu_idx, 1);
     if (ret) {
         if (retaddr) {
@@ -4836,7 +4993,13 @@ void tlb_fill(target_ulong addr, int is_write, int mmu_idx, void *retaddr)
                 cpu_restore_state(tb, env, pc, NULL);
             }
         }
+     //   printf("RAISE EXCEPTION ERROR\n");
+     // if (!translating) {
         raise_exception_err(env->exception_index, env->error_code);
+     /* }
+      else {
+        longjmp(jmp_tb, 1);
+      }*/
     }
     env = saved_env;
 }
@@ -4899,7 +5062,6 @@ static inline void svm_save_seg(target_phys_addr_t addr,
 static inline void svm_load_seg(target_phys_addr_t addr, SegmentCache *sc)
 {
     unsigned int flags;
-
     sc->selector = lduw_phys(addr + offsetof(struct vmcb_seg, selector));
     sc->base = ldq_phys(addr + offsetof(struct vmcb_seg, base));
     sc->limit = ldl_phys(addr + offsetof(struct vmcb_seg, limit));
@@ -4921,7 +5083,6 @@ void helper_vmrun(int aflag, int next_eip_addend)
     target_ulong addr;
     uint32_t event_inj;
     uint32_t int_ctl;
-
     helper_svm_check_intercept_param(SVM_EXIT_VMRUN, 0);
 
     if (aflag == 2)
@@ -5287,7 +5448,6 @@ void helper_svm_check_io(uint32_t port, uint32_t param,
 void helper_vmexit(uint32_t exit_code, uint64_t exit_info_1)
 {
     uint32_t int_ctl;
-
     qemu_log_mask(CPU_LOG_TB_IN_ASM, "vmexit(%08x, %016" PRIx64 ", %016" PRIx64 ", " TARGET_FMT_lx ")!\n",
                 exit_code, exit_info_1,
                 ldq_phys(env->vm_vmcb + offsetof(struct vmcb, control.exit_info_2)),

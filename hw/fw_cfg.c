@@ -26,6 +26,8 @@
 #include "isa.h"
 #include "fw_cfg.h"
 #include "sysbus.h"
+#include "../rr_log.h"
+#include "../rr_log_consts.h"
 
 /* debug firmware config */
 //#define DEBUG_FW_CFG
@@ -107,7 +109,10 @@ static uint8_t fw_cfg_read(FWCfgState *s)
 
 static uint32_t fw_cfg_io_readb(void *opaque, uint32_t addr)
 {
-    return fw_cfg_read(opaque);
+    uint64_t ret;
+
+    ret = fw_cfg_read(opaque);
+    return ret;
 }
 
 static void fw_cfg_io_writeb(void *opaque, uint32_t addr, uint32_t value)

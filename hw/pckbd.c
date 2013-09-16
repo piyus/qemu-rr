@@ -26,6 +26,12 @@
 #include "pc.h"
 #include "ps2.h"
 #include "sysemu.h"
+#include "rr_log.h"
+//#include <linux/kvm.h>
+//#include "kvm_fifo.h"
+#include "record.h"
+#include "cpus.h"
+#include "mydebug.h"
 
 /* debug PC keyboard */
 //#define DEBUG_KBD
@@ -196,7 +202,14 @@ static uint32_t kbd_read_status(void *opaque, uint32_t addr)
 {
     KBDState *s = opaque;
     int val;
-    val = s->status;
+    if (replaying_fp) {
+      val = hw_replay(RR_ENTRY_TYPE_KBD);
+    } else {
+      val = s->status;
+    }
+    if (recording_fp) {
+      hw_record(val, RR_ENTRY_TYPE_KBD);
+    }
     DPRINTF("kbd: read status=0x%02x\n", val);
     return val;
 }
@@ -228,8 +241,16 @@ static uint32_t ioport92_read(void *opaque, uint32_t addr)
     KBDState *s = opaque;
     uint32_t ret;
 
-    ret = s->outport;
-    DPRINTF("kbd: read outport=0x%02x\n", ret);
+    if (replaying_fp) {
+      ret = hw_replay(RR_ENTRY_TYPE_KBD);
+    } else {
+      ret = s->outport;
+      DPRINTF("kbd: read outport=0x%02x\n", ret);
+    }
+    if (recording_fp) {
+      hw_record(ret,  RR_ENTRY_TYPE_KBD);
+    }
+
     return ret;
 }
 
@@ -308,12 +329,19 @@ static uint32_t kbd_read_data(void *opaque, uint32_t addr)
     KBDState *s = opaque;
     uint32_t val;
 
-    if (s->pending == KBD_PENDING_AUX)
+    if (replaying_fp) {
+      val = hw_replay(RR_ENTRY_TYPE_KBD);
+    } else {
+      if (s->pending == KBD_PENDING_AUX)
         val = ps2_read_data(s->mouse);
-    else
+      else
         val = ps2_read_data(s->kbd);
+      DPRINTF("kbd: read data=0x%02x\n", val);
+    }
+    if (recording_fp) {
+      hw_record(val, RR_ENTRY_TYPE_KBD);
+    }
 
-    DPRINTF("kbd: read data=0x%02x\n", val);
     return val;
 }
 

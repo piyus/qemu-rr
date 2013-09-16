@@ -19,7 +19,7 @@
  * the host adapter emulator.
  */
 
-//#define DEBUG_SCSI
+#define DEBUG_SCSI
 
 #ifdef DEBUG_SCSI
 #define DPRINTF(fmt, ...) \
@@ -631,7 +631,7 @@ static int scsi_disk_emulate_mode_sense(SCSIRequest *req, uint8_t *outbuf)
     page = req->cmd.buf[2] & 0x3f;
     page_control = (req->cmd.buf[2] & 0xc0) >> 6;
     DPRINTF("Mode Sense(%d) (page %d, len %d, page_control %d)\n",
-        (req->cmd.buf[0] == MODE_SENSE) ? 6 : 10, page, len, page_control);
+        (req->cmd.buf[0] == MODE_SENSE) ? 6 : 10, page, 1, page_control);
     memset(outbuf, 0, req->cmd.xfer);
     p = outbuf;
 

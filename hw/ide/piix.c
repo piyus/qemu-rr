@@ -31,6 +31,11 @@
 #include "sysemu.h"
 #include "dma.h"
 
+#include "rr_log.h"
+#include "cpus.h"
+#include "mydebug.h"
+#include "record.h"
+
 #include <hw/ide/pci.h>
 
 static uint32_t bmdma_readb(void *opaque, uint32_t addr)
@@ -43,14 +48,21 @@ static uint32_t bmdma_readb(void *opaque, uint32_t addr)
         val = bm->cmd;
         break;
     case 2:
-        val = bm->status;
+        if (replaying_fp) {
+          val = hw_replay(RR_ENTRY_TYPE_BMDMA_STATUS);
+        } else {
+          val = bm->status;
+          if (recording_fp) {
+            hw_record(val, RR_ENTRY_TYPE_BMDMA_STATUS);
+          }
+        }
         break;
     default:
         val = 0xff;
         break;
     }
 #ifdef DEBUG_IDE
-    printf("bmdma: readb 0x%02x : 0x%02x\n", addr, val);
+    printf("piix bmdma: readb 0x%02x : 0x%02x\n", addr, val);
 #endif
     return val;
 }

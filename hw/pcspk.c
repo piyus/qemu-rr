@@ -28,6 +28,13 @@
 #include "audio/audio.h"
 #include "qemu-timer.h"
 
+#include "rr_log.h"
+//#include "kvm_fifo.h"
+//#include <linux/kvm.h>
+#include "record.h"
+#include "cpus.h"
+#include "mydebug.h"
+
 #define PCSPK_BUF_LEN 1792
 #define PCSPK_SAMPLE_RATE 32000
 #define PCSPK_MAX_FREQ (PCSPK_SAMPLE_RATE >> 1)
@@ -116,11 +123,20 @@ static uint32_t pcspk_ioport_read(void *opaque, uint32_t addr)
 {
     PCSpkState *s = opaque;
     int out;
+    uint32_t ret;
 
-    s->dummy_refresh_clock ^= (1 << 4);
-    out = pit_get_out(s->pit, 2, qemu_get_clock(vm_clock)) << 5;
+    if (replaying_fp) {
+      ret = hw_replay(RR_ENTRY_TYPE_SPK);
+    } else {
+      s->dummy_refresh_clock ^= (1 << 4);
+      out = pit_get_out(s->pit, 2, qemu_get_clock(vm_clock)) << 5;
 
-    return pit_get_gate(s->pit, 2) | (s->data_on << 1) | s->dummy_refresh_clock | out;
+      ret = pit_get_gate(s->pit, 2) | (s->data_on << 1) | s->dummy_refresh_clock | out;
+    }
+    if (recording_fp) {
+      hw_record(ret, RR_ENTRY_TYPE_SPK);
+    }
+    return ret;
 }
 
 static void pcspk_ioport_write(void *opaque, uint32_t addr, uint32_t val)

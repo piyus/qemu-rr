@@ -414,6 +414,7 @@ static uint32_t uhci_ioport_readb(void *opaque, uint32_t addr)
     UHCIState *s = opaque;
     uint32_t val;
 
+printf("%s()\n", __func__);
     addr &= 0x1f;
     switch(addr) {
     case 0x0c:
@@ -511,6 +512,7 @@ static uint32_t uhci_ioport_readw(void *opaque, uint32_t addr)
     UHCIState *s = opaque;
     uint32_t val;
 
+printf("%s()\n", __func__);
     addr &= 0x1f;
     switch(addr) {
     case 0x00:
@@ -566,6 +568,7 @@ static uint32_t uhci_ioport_readl(void *opaque, uint32_t addr)
     UHCIState *s = opaque;
     uint32_t val;
 
+printf("%s()\n", __func__);
     addr &= 0x1f;
     switch(addr) {
     case 0x08:

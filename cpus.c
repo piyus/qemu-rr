@@ -24,21 +24,22 @@
 
 /* Needed early for CONFIG_BSD etc. */
 #include "config-host.h"
-
+#include <mydebug.h>
 #include "monitor.h"
 #include "sysemu.h"
 #include "gdbstub.h"
 #include "dma.h"
 #include "kvm.h"
 #include "exec-all.h"
-
 #include "cpus.h"
-
+#include "rr_log.h"
+#include "record.h"
 #ifdef SIGRTMIN
 #define SIG_IPI (SIGRTMIN+4)
 #else
 #define SIG_IPI SIGUSR1
 #endif
+#define DPRINTF(fmt, ...) printf(fmt, ## __VA_ARGS__);
 
 static CPUState *next_cpu;
 
@@ -105,6 +106,70 @@ static void do_vm_stop(int reason)
         vm_state_notify(0, reason);
         monitor_protocol_event(QEVENT_STOP, NULL);
     }
+}
+void
+vcpus_get_n_branches(uint64_t *n_branches, size_t n_branches_size)
+{
+  CPUState *penv = first_cpu;
+  int i = 0;
+
+   for (; penv; penv = penv->next_cpu) {
+     if (!kvm_enabled()) {
+       n_branches[i] = penv->n_branches;
+       i++;
+     }
+   }
+}
+
+void
+vcpus_set_n_branches(uint64_t *n_branches, size_t n_branches_size)
+{
+  CPUState *penv = first_cpu;
+  int i = 0;
+
+   for (; penv; penv = penv->next_cpu) {
+     if (!kvm_enabled()) {
+       penv->n_branches = n_branches[i];
+       i++;
+     }
+   }
+}
+
+
+void
+vcpus_get_eips(uint64_t *eips, size_t eips_size)
+{
+  CPUState *penv = first_cpu;
+  int i = 0;
+
+   for (; penv; penv = penv->next_cpu) {
+     if (!kvm_enabled()) {
+       eips[i] = penv->eip;
+       i++;
+     }
+   }
+}
+void
+vcpus_get_ecxs(uint64_t *ecxs, size_t ecxs_size)
+{
+  CPUState *penv = first_cpu;
+  int i = 0;
+
+   for (; penv; penv = penv->next_cpu) {
+     if (!kvm_enabled()) {
+       ecxs[i] = penv->regs[R_ECX];
+       i++;
+     }
+   }
+}
+
+void
+print_state(void)
+{
+  uint64_t n_branches[1];
+
+  vcpus_get_n_branches(n_branches, 1);
+  log_cpu_state(cpu_single_env, 1);
 }
 
 static int cpu_can_run(CPUState *env)
@@ -488,10 +553,13 @@ static void *kvm_cpu_thread_fn(void *arg)
     qemu_cond_signal(&qemu_cpu_cond);
 
     /* and wait for machine initialization */
-    while (!qemu_system_ready)
+    while (!qemu_system_ready) {
+        printf("Initializing...\n");
         qemu_cond_timedwait(&qemu_system_cond, &qemu_global_mutex, 100);
+    }
 
     while (1) {
+        printf("cpu_can_run\n");
         if (cpu_can_run(env))
             qemu_cpu_exec(env);
         qemu_kvm_wait_io_event(env);
@@ -528,6 +596,7 @@ static void *tcg_cpu_thread_fn(void *arg)
 void qemu_cpu_kick(void *_env)
 {
     CPUState *env = _env;
+
     qemu_cond_broadcast(env->halt_cond);
     qemu_thread_signal(env->thread, SIG_IPI);
 }
@@ -748,6 +817,7 @@ static int qemu_cpu_exec(CPUState *env)
     int64_t ti;
 #endif
 
+        //printf("%s()\n", __func__);
 #ifdef CONFIG_PROFILER
     ti = profile_getclock();
 #endif
@@ -779,13 +849,60 @@ static int qemu_cpu_exec(CPUState *env)
     return ret;
 }
 
-bool cpu_exec_all(void)
+int
+qemu_rr_entry_valid (void)
 {
-    if (next_cpu == NULL)
+  uint64_t n_branches[MAX_NUM_CPUS];
+  uint64_t ecxs[MAX_NUM_CPUS];
+
+  vcpus_get_ecxs(ecxs, MAX_NUM_CPUS);
+  vcpus_get_n_branches(n_branches, MAX_NUM_CPUS);
+  return((replay_entry.n_branches == n_branches[cpu_number]) 
+              && (ecxs[cpu_number] == replay_entry.ecx));
+}
+
+void
+do_flush_all (void)
+{
+  first_cpu->halted = 0;
+  first_cpu->interrupt_request = 0;
+  first_cpu->exit_request = 0;
+  tb_flush(first_cpu);
+  tb_invalidated_flag = 1;
+  tlb_flush (first_cpu, 1);
+}
+
+void
+init_counter (void)
+{
+  CPUState *next_cpu1 = first_cpu;
+
+  for (; next_cpu1 != NULL; next_cpu1 = next_cpu1->next_cpu) {
+    next_cpu1->n_branches = 0;
+  }
+}
+
+void
+finish_qemu_rr (void)
+{
+  printf("Record/Replay finished Entering live mode\n");
+  tb_flush(first_cpu);
+  first_cpu->n_branches = 0;
+}
+
+bool cpu_exec_all (void)
+{
+    static int i = 0;
+
+    if (next_cpu == NULL) {
         next_cpu = first_cpu;
-    for (; next_cpu != NULL && !exit_request; next_cpu = next_cpu->next_cpu) {
+        i = 0;
+    }
+     for (; next_cpu != NULL && !exit_request; next_cpu = next_cpu->next_cpu, i++) {
         CPUState *env = next_cpu;
 
+        rr_run = env->kvm_run;
+        cpu_number = i;
         qemu_clock_enable(vm_clock,
                           (env->singlestep_enabled & SSTEP_NOTIMER) == 0);
 

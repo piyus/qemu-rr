@@ -253,6 +253,126 @@ STEXI
 TODO
 ETEXI
 
+DEF("drift", 0, QEMU_OPTION_drift,
+    "-drift       generate drift log for kvm-mrod\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -record
+@findex -record
+TODO
+ETEXI
+
+DEF("record", HAS_ARG, QEMU_OPTION_record,
+    "-record <record.log>\n"
+    "                print record log to <record.log>\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -record
+@findex -record
+TODO
+ETEXI
+
+DEF("replay", HAS_ARG, QEMU_OPTION_replay,
+    "-replay <replay.log>\n"
+    "                read replay log from <replay.log>\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -replay
+@findex -replay
+TODO
+ETEXI
+
+DEF("rr_lockstep", HAS_ARG, QEMU_OPTION_rr_lockstep,
+    "-rr_lockstep <pipe-name>\n"
+    "                rr_lockstep <pipe-name>\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -rr_lockstep
+@findex -rr_lockstep
+TODO
+ETEXI
+
+DEF("rr_lockstep_direction", HAS_ARG, QEMU_OPTION_rr_lockstep_direction,
+    "-rr_lockstep_direction <0/1>\n"
+    "                rr_lockstep_direction [0=read, 1=write]\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -rr_lockstep_direction
+@findex -rr_lockstep_direction
+TODO
+ETEXI
+
+DEF("replay_buf_size", HAS_ARG, QEMU_OPTION_replay_buf_size,
+    "-replay_buf_size <n>\n"
+    "                replay_buf_size [size of replay buf in bytes. Size of shm_queue 20x this value]\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -replay_buf_size
+@findex -replay_buf_size
+TODO
+ETEXI
+
+DEF("rr_log_format_human", 0, QEMU_OPTION_rr_log_format_human, \
+    "-rr_log_format_human     use human readable record log format\n", QEMU_ARCH_ALL)
+STEXI
+@item -rr_log_format_human
+@findex -rr_log_format_human
+Use human readable record/replay log format.
+ETEXI
+
+
+DEF("microreplay_n_timer_interrupts", HAS_ARG, QEMU_OPTION_microreplay_n_timer_interrupts,
+    "-microreplay_n_timer_interrupts <n>\n"
+    "                microreplay_n_timer_interrupts [number of timer interrupts to rollback]\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -microreplay_n_timer_interrupts
+@findex -microreplay_n_timer_interrupts
+TODO
+ETEXI
+
+DEF("microreplay_network_send_delay", 0, QEMU_OPTION_microreplay_network_send_delay,
+    "-microreplay_network_send_delay\n"
+    "                microreplay_network_send_delay    delay sending network packets till replay process catches up (commits)\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -microreplay_network_send_delay
+@findex -microreplay_network_send_delay
+TODO
+ETEXI
+
+DEF("record_output_bdrv", 0, QEMU_OPTION_record_output_bdrv,
+    "-record_output_bdrv\n"
+    "                record_output_bdrv                    use output record for bdrv reads\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -record_output_bdrv
+@findex -record_output_bdrv
+TODO
+ETEXI
+
+DEF("replay_output_bdrv", 0, QEMU_OPTION_replay_output_bdrv,
+    "-replay_output_bdrv\n"
+    "                replay_output_bdrv                    use output replay for bdrv reads\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -replay_output_bdrv
+@findex -replay_output_bdrv
+TODO
+ETEXI
+
+
+
+DEF("microreplay_dsk_path", HAS_ARG, QEMU_OPTION_microreplay_dsk_path,
+    "-microreplay_dsk_path <path>\n"
+    "                microreplay_dsk_path [path]\n",
+    QEMU_ARCH_ALL)
+STEXI
+@item -microreplay_dsk_path
+@findex -microreplay_dsk_path
+TODO
+ETEXI
+
 DEF("mtdblock", HAS_ARG, QEMU_OPTION_mtdblock,
     "-mtdblock file  use 'file' as on-board Flash memory image\n",
     QEMU_ARCH_ALL)
